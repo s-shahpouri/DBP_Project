@@ -1,13 +1,3 @@
-#!/usr/bin/env python
-# -*-coding:utf-8 -*-
-'''
-@File    :   utilities.py
-@Time    :   2023/06/27 14:33:55
-@Author  :   AVGalapon 
-@Contact :   a.v.galapon@umcg.nl
-@License :   (C)Copyright 2022-2023, Arthur Galapon
-@Desc    :   scripts to read json files, etc
-'''
 
 import json
 import os
@@ -126,25 +116,25 @@ def create_list_from_master_json(test_json_path, data_path, exception_list=[]):
         
         return pCT_dose_list, rCT_dose_list, final_translation_list
 
-def split_data(data, train_ratio, val_ratio, test_ratio, seed=None):
-    # Set the random seed for replayability
-    random.seed(seed)
+# def split_data(data, train_ratio, val_ratio, test_ratio, seed=None):
+#     # Set the random seed for replayability
+#     random.seed(seed)
 
-    # Calculate the number of samples for each set
-    total_samples = len(data)
-    train_samples = int(total_samples * train_ratio)
-    val_samples = int(total_samples * val_ratio)
-    test_samples = total_samples - train_samples - val_samples
+#     # Calculate the number of samples for each set
+#     total_samples = len(data)
+#     train_samples = int(total_samples * train_ratio)
+#     val_samples = int(total_samples * val_ratio)
+#     test_samples = total_samples - train_samples - val_samples
 
-    # Shuffle the data randomly
-    random.shuffle(data)
+#     # Shuffle the data randomly
+#     random.shuffle(data)
 
-    # Split the data into sets
-    train_set = data[:train_samples]
-    val_set = data[train_samples:train_samples + val_samples]
-    test_set = data[train_samples + val_samples:]
+#     # Split the data into sets
+#     train_set = data[:train_samples]
+#     val_set = data[train_samples:train_samples + val_samples]
+#     test_set = data[train_samples + val_samples:]
 
-    return train_set, val_set, test_set
+#     return train_set, val_set, test_set
 
 def create_folder_if_not_exists(path):
     if not os.path.isdir(path):
@@ -234,6 +224,7 @@ def prepare_data_nrrd(data_dir, patient_ids):
     # Load the JSON data
     with open(os.path.join(data_dir, 'file_info.json'), 'r') as json_file:
         nrrd_info = json.load(json_file)
+        
     for patient_id in patient_ids:
         patient_folder = os.path.join(data_dir, patient_id)
         all_files = glob.glob(os.path.join(patient_folder, '*.nrrd'))
@@ -273,6 +264,10 @@ def prepare_data_nrrd(data_dir, patient_ids):
                                 reg_pos_array = np.array(reg_pos, dtype=np.float32)
 
     return pct_paths, rct_paths, reg_pos_array
+
+
+
+
 
 
 def split_data(data, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
