@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 import json
-from dual_network import Dual3DCNN3, Dual3DCNN4, Dual3DCNN5
+from dual_network import FlexibleDual3DCNN, Dual3DCNN3, Dual3DCNN4, Dual3DCNN5
 import torch
 from torch.utils.data import Dataset
 import SimpleITK as sitk
@@ -26,13 +26,26 @@ from monai.data.image_reader import ITKReader
 from monai.data import SmartCacheDataset
 import random
 from utilities import list_patient_folders, prepare_data_nrrd, split_data
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import optuna
+from optuna.trial import TrialState
+import functools
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
-data_path_NEW = '/home/shahpouriz/Data/DBP_newDATA/DBP/nrrd/test'
+# data_path_NEW = '/data/shahpouriz/DBP_newDATA/nrrd/oneCTperPatients/proton'
+# data_path = '/data/shahpouriz/DBP_DATA_total/nrrd/oneCTperPatinet/proton'
+data_path = '/data/shahpouriz/DBP_DATA_total/nrrd/oneOPTZperPatinet/proton'
+# data_path = '/data/shahpouriz/DBP_DATA_total/nrrd/oneoneperPatinet/proton'
+# data_path = '/data/shahpouriz/DBP_DATA_total/nrrd/oneCTperPatinet/proton'
 
-
-patient_list_NEW = list_patient_folders(data_path_NEW)
+patient_list_NEW = list_patient_folders(data_path)
 # Shuffle patient list if you want randomness
+random.seed(42)  # You can choose any number as the seed
 random.shuffle(patient_list_NEW)
 
 # Define split sizes
@@ -46,9 +59,9 @@ train_patients = patient_list_NEW[:train_size]
 val_patients = patient_list_NEW[train_size:train_size + val_size]
 test_patients = patient_list_NEW[train_size + val_size:]
 
-train_pct, train_rct, train_pos = prepare_data_nrrd(data_path_NEW, train_patients)
-val_pct, val_rct, val_pos = prepare_data_nrrd(data_path_NEW, val_patients)
-test_pct, test_rct, test_pos = prepare_data_nrrd(data_path_NEW, test_patients)
+train_pct, train_rct, train_pos = prepare_data_nrrd(data_path, train_patients)
+val_pct, val_rct, val_pos = prepare_data_nrrd(data_path, val_patients)
+test_pct, test_rct, test_pos = prepare_data_nrrd(data_path, test_patients)
 
 # Create dictionaries for each dataset
 train_data = [{"plan": img, "repeat": tar, "pos": pos} for img, tar, pos in zip(train_pct, train_rct, train_pos)]
@@ -60,15 +73,7 @@ test_data = [{"plan": img, "repeat": tar, "pos": pos} for img, tar, pos in zip(t
 print("Number of training samples:", len(train_data))
 print("Number of validation samples:", len(val_data))
 print("Number of test samples:", len(test_data))
-
-
-# Set parameters
-starting_epoch = 0
-final_epoch = 200
-
-# Condition for saving list
-best_mae = np.inf
-exception_list = ['']
+print(len(test_data)+len(val_data)+len(train_data))
 
 
 dim = 128
@@ -77,7 +82,7 @@ pixdim = (3.0, 3.0, 3.0)
 transforms = Compose([
         LoadImaged(keys=["plan", "repeat"], reader=ITKReader()),
         EnsureChannelFirstd(keys=["plan", "repeat"]),
-        ScaleIntensityd(keys=["plan", "repeat"]),
+        # ScaleIntensityd(keys=["plan", "repeat"]),
         Spacingd(keys=["plan", "repeat"], pixdim=pixdim, mode='trilinear'),
         SpatialPadd(keys=["plan", "repeat"], spatial_size=size, mode='constant'),  # Ensure minimum size
         CenterSpatialCropd(keys=["plan", "repeat"], roi_size=size),  # Ensure uniform size
@@ -90,43 +95,79 @@ train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=1)
 val_ds = CacheDataset(data=val_data, transform=transforms, cache_rate=0.8, num_workers=1)
 val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=1)
 
+
+lambda_reg = 1e-5  # for L1 regularization
+weight_decay = 1e-5  # for L2 regularization
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+final_epoch = 30
+learning_rate = 0.0001
+best_mae = np.inf 
 # Build model
-print('Initializing model...')
-model = Dual3DCNN5(width=dim, height=dim, depth=dim)
-device = torch.device("cuda:0")
-model.to(device)
+architectures = [16, 32, 64, 128]
+
+# [
+#     [8, 16, 32],   # Small network
+#     [16, 32, 64],  # Small network
+
+#     [32, 64, 128],  # Medium network
+#     [16, 32, 64, 128],
+
+#     [32, 64, 128, 256],  # Larger network
+#     [16, 32, 128, 256, 512]  # Even larger network
+# ]
+
+
+save_dir = '/home/shahpouriz/Data/DBP_Project/LOG_opt'
+filename = f'{dim}_1optP_{learning_rate}_{architectures}_L1L2(5)'
+loss_file = fr'/home/shahpouriz/Data/DBP_Project/LOG_opt/{filename}.txt'
+
+if not os.path.isdir(save_dir):
+        os.makedirs(save_dir)
+
+
+# model = FlexibleDual3DCNN(architectures).to(device)
+model = FlexibleDual3DCNN(architectures).to(device)
 
 # mae_loss = torch.nn.MSELoss()
-mae_loss = torch.nn.L1Loss()
+loss_func = torch.nn.L1Loss()
 
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-learning_rate = 1e-4  # Start with a learning rate
+
+  # Start with a learning rate
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=True)
+scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=4, verbose=True)
 
 
 
-# Training loop
-for epoch in range(starting_epoch, final_epoch):
-    model.train()  # Set model to training mode
-    mae_list = []
-    train_loss = []
-    for i, batch_data in enumerate(train_loader):  # Use enumerate to get the batch index
+model.train()
+for epoch in range(final_epoch):
+    model.train()
+    loss_list = []
+    for i, batch_data in enumerate(train_loader):
         pCT, rCT = batch_data["plan"].to(device), batch_data["repeat"].to(device)
         reg = batch_data["pos"].clone().detach().requires_grad_(True).to(device)  # If gradients are required for 'reg'
         optimizer.zero_grad()
 
         output = model(pCT, rCT)
-        loss_output = mae_loss(output, reg)
+        loss = loss_func(output, reg)
 
-        loss_output.backward()
-        optimizer.step()
+
+        # L1 Regularization
+        l1_reg = torch.tensor(0., requires_grad=True).to(device)
+        for name, param in model.named_parameters():
+            if 'weight' in name:  # Apply L1 only to weights, not biases
+                l1_reg = l1_reg + torch.norm(param, 1)
         
-        # Logging
-        mae_list.append(loss_output.item())
-        mean_mae = np.mean(mae_list)
-        # Corrected to print the current batch number
-        print(f'Epoch: {epoch}/{final_epoch}, Batch: {i+1}/{len(train_loader)}, Loss_avg: {mean_mae}')
+        # Combine loss with L1 regularization
+        loss = loss + lambda_reg * l1_reg
+
+
+        loss.backward()
+        optimizer.step()
+
+        loss_list.append(loss.item())
+        mean_tot_loss = np.mean(loss_list)
+        # print(f'Epoch: {epoch}/{final_epoch}, Batch: {i+1}/{len(train_loader)}, Loss_avg: {mean_tot_loss}')
+
 
     # Validation loop
     model.eval()
@@ -137,7 +178,7 @@ for epoch in range(starting_epoch, final_epoch):
             reg_val = batch_data["pos"].clone().detach().requires_grad_(True).to(device)  # If gradients are required for 'reg'
 
             output_val = model(pCT_val, rCT_val)
-            loss_output_val = mae_loss(output_val, reg_val)
+            loss_output_val = loss_func(output_val, reg_val)
 
             val_loss.append(loss_output_val.item())
 
@@ -146,20 +187,14 @@ for epoch in range(starting_epoch, final_epoch):
 
         # Adjust learning rate
         scheduler.step(mean_val_loss)
-        
-    save_dir = '/home/shahpouriz/Data/DBP_Project/LOG'
-    filename = f'model_{dim}_all2_opt_deepermodel'
-    loss_file = fr'/home/shahpouriz/Data/DBP_Project/LOG/{filename}.txt'
-
-    if not os.path.isdir(save_dir):
-        os.makedirs(save_dir)
-
+   
     current_valid_mae = mean_val_loss
 
     with open(loss_file, 'a') as f: #a-append
-        f.write(f'Epoch: {epoch+1}/{final_epoch}, Loss: {mean_mae}, Val: {mean_val_loss}\n')
+        f.write(f'Epoch: {epoch+1}/{final_epoch}, Loss: {mean_tot_loss}, Val: {mean_val_loss}\n')
         if current_valid_mae <= best_mae and epoch > 0:
             best_mae = current_valid_mae
-            model_filename = f'{filename}_{epoch+1}.pt'  # Store the model filename
+            model_filename = f'{filename}.pt'  # Store the model filename
             torch.save(model.state_dict(),f'{save_dir}/{model_filename}')
-            f.write(f'{model_filename} is saved!\n')  # This line should be inside the 'with' block
+            f.write(f'{model_filename} is saved! for epoch {epoch+1}\n')  
+            print(f'{model_filename} is saved! for epoch {epoch+1}\n')  
