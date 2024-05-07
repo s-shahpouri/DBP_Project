@@ -1,0 +1,5 @@
+{'plan_name': 'A1PHH', 'planning_exam_name': 'pCTp0', 'repeatedCT_name': 'rCTp1',
+'final_translation_coordinate': {'x': -0.8842463777977525, 'y': -0.02034845224251025, 'z': 0.13787643624858137},
+'planningCT_filename': 'DBP_OP055_P_planningCT.nrrd',
+'repeatedCT_filename': '/home/shahpouriz/Data/DBP_CTs/DBP_OP055/A1PHH/rCTp1'
+}

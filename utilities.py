@@ -266,10 +266,6 @@ def prepare_data_nrrd(data_dir, patient_ids):
     return pct_paths, rct_paths, reg_pos_array
 
 
-
-
-
-
 def split_data(data, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
     random.seed(seed)
     
@@ -288,3 +284,121 @@ def split_data(data, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
     test_data = data[num_train + num_val:]
     
     return train_data, val_data, test_data
+
+
+
+def prepare_data_nrrd_for_CT(data_dir, patient_ids):
+    pct_paths = []
+    rct_paths = []
+    reg_pos = []
+
+    # Load the JSON data
+    with open(os.path.join(data_dir, 'file_info.json'), 'r') as json_file:
+        nrrd_info = json.load(json_file)
+    
+    for patient in nrrd_info:
+        if patient['id'] in patient_ids:
+            for examination_detail in patient['examination_details']:
+                # Paths for planning CT and repeated CT
+                planning_ct_path = os.path.join(data_dir, patient['id'], examination_detail['planningCT_filename'])
+                repeated_ct_path = os.path.join(data_dir, patient['id'], examination_detail['repeatedCT_filename'])
+                
+                # Append paths if they exist
+                if os.path.exists(planning_ct_path) and os.path.exists(repeated_ct_path):
+                    pct_paths.append(planning_ct_path)
+                    rct_paths.append(repeated_ct_path)
+                    
+                    # Append registration position
+                    reg_pos.append([
+                        examination_detail['final_translation_coordinate']['x'],
+                        examination_detail['final_translation_coordinate']['y'],
+                        examination_detail['final_translation_coordinate']['z']
+                    ])
+    
+    reg_pos_array = np.array(reg_pos, dtype=np.float32)
+
+    return pct_paths, rct_paths, reg_pos_array
+
+
+
+import os
+import random
+import glob
+
+class DataFactory:
+    def __init__(self, data_path, train_ratio=0.70, val_ratio=0.20, test_ratio=0.10):
+        self.data_path = data_path
+        self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
+        self.test_ratio = test_ratio
+        
+        self.train_data = []
+        self.val_data = []
+        self.test_data = []
+        
+        self._prepare_data()
+
+    def _prepare_data(self):
+        patient_folders = [os.path.join(self.data_path, name) for name in os.listdir(self.data_path) if os.path.isdir(os.path.join(self.data_path, name))]
+        random.seed(42)  # Ensuring reproducibility
+        random.shuffle(patient_folders)  # Shuffling to randomize the input data order
+        
+        total_patients = len(patient_folders)
+        train_end = int(total_patients * self.train_ratio)
+        val_end = train_end + int(total_patients * self.val_ratio)
+        
+        self.train_data = patient_folders[:train_end]
+        self.val_data = patient_folders[train_end:val_end]
+        self.test_data = patient_folders[val_end:]
+        
+    def get_data_split(self, split_type):
+        if split_type == 'train':
+            return self.train_data
+        elif split_type == 'val':
+            return self.val_data
+        elif split_type == 'test':
+            return self.test_data
+        else:
+            raise ValueError("Invalid data split type. Use 'train', 'val', or 'test'.")
+
+
+from monai.data import DataLoader, CacheDataset
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, NormalizeIntensityd, Spacingd, SpatialPadd, CenterSpatialCropd
+
+class LoaderFactory:
+    def __init__(self, data, transforms, cache_rate=0.1, num_workers=1):
+        self.data = data
+        self.transforms = transforms
+        self.cache_rate = cache_rate
+        self.num_workers = num_workers
+
+    def get_loader(self, batch_size=1, shuffle=True):
+        dataset = CacheDataset(data=self.data, transform=self.transforms, cache_rate=self.cache_rate, num_workers=self.num_workers)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
+
+# from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, NormalizeIntensityd, Spacingd, SpatialPadd, CenterSpatialCropd
+
+# from utilities import DataFactory, LoaderFactory
+# data_path = '/data/shahpouriz/DBP_CTs/nrrd/proton'
+# data_preparator = DataFactory(data_path)
+# train_data = data_preparator.get_data_split('train')
+
+# # Define transformations as shown in your code snippet
+# dim = 128
+# size = (dim, dim, dim)
+# pixdim = (1.0, 1.0, 1.0)
+# transforms = Compose([
+#         LoadImaged(keys=["plan", "repeat"], reader=ITKReader()),
+#         EnsureChannelFirstd(keys=["plan", "repeat"]),
+#         NormalizeIntensityd(keys=["plan", "repeat"]),
+#         Spacingd(keys=["plan", "repeat"], pixdim=pixdim, mode='trilinear'),
+#         SpatialPadd(keys=["plan", "repeat"], spatial_size=size, mode='constant'),  # Ensure minimum size
+#         CenterSpatialCropd(keys=["plan", "repeat"], roi_size=size),  # Ensure uniform size
+#     ])
+
+# train_loader_factory = LoaderFactory(train_data, transforms, cache_rate=0.01, num_workers=1)
+# train_loader = train_loader_factory.get_loader(batch_size=1, shuffle=True)
+
+# # Fetch a batch and do operations
+# for batch in train_loader:
+#     print(batch['plan'].shape)

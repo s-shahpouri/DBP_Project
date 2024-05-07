@@ -103,30 +103,19 @@ final_epoch = 30
 learning_rate = 0.0001
 best_mae = np.inf 
 # Build model
-architectures = [16, 32, 64, 128]
 
-# [
-#     [8, 16, 32],   # Small network
-#     [16, 32, 64],  # Small network
-
-#     [32, 64, 128],  # Medium network
-#     [16, 32, 64, 128],
-
-#     [32, 64, 128, 256],  # Larger network
-#     [16, 32, 128, 256, 512]  # Even larger network
-# ]
 
 
 save_dir = '/home/shahpouriz/Data/DBP_Project/LOG_opt'
-filename = f'{dim}_1optP_{learning_rate}_{architectures}_L1L2(5)'
-loss_file = fr'/home/shahpouriz/Data/DBP_Project/LOG_opt/{filename}.txt'
+filename = f'{dim}_1optP_{learning_rate}_L1L2(5)'
+loss_file = f'{save_dir}/{filename}.txt'
 
 if not os.path.isdir(save_dir):
         os.makedirs(save_dir)
 
 
 # model = FlexibleDual3DCNN(architectures).to(device)
-model = FlexibleDual3DCNN(architectures).to(device)
+model = Dual3DCNN4(width=dim, height=dim, depth=dim).to(device)
 
 # mae_loss = torch.nn.MSELoss()
 loss_func = torch.nn.L1Loss()
