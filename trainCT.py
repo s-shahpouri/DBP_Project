@@ -19,7 +19,7 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 from utilities import list_patient_folders, prepare_data_nrrd, split_data
-from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, Spacingd, ScaleIntensityd, SpatialPadd, CenterSpatialCropd, ScaleIntensityRanged
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, Spacingd, RandGaussianNoised, SpatialPadd, CenterSpatialCropd, ScaleIntensityRanged, RandGibbsNoised, RandKSpaceSpikeNoised, RandRicianNoised, ScaleIntensityRanged
 from monai.data import CacheDataset, DataLoader, Dataset
 from monai.transforms import LoadImaged
 from monai.data.image_reader import ITKReader
@@ -33,7 +33,6 @@ import torch.optim as optim
 import optuna
 from optuna.trial import TrialState
 import functools
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.cuda.amp import GradScaler, autocast
 from monai.transforms import NormalizeIntensityd
@@ -89,51 +88,68 @@ print(len(test_data)+len(val_data)+len(train_data))
 
 
 
-dim = 128
+dim = 64
 size = (dim, dim, dim)
-pixdim = (3.0, 3.0, 3.0)
+pixdim = (1.0, 1.0, 1.0)
 transforms = Compose([
         LoadImaged(keys=["plan", "repeat"], reader=ITKReader()),
         EnsureChannelFirstd(keys=["plan", "repeat"]),
         NormalizeIntensityd(keys=["plan", "repeat"]),
+
         Spacingd(keys=["plan", "repeat"], pixdim=pixdim, mode='trilinear'),
         SpatialPadd(keys=["plan", "repeat"], spatial_size=size, mode='constant'),  # Ensure minimum size
         CenterSpatialCropd(keys=["plan", "repeat"], roi_size=size),  # Ensure uniform size
+        # ScaleIntensityRanged(keys=["plan", "repeat"], a_min=-2846, a_max=32767, b_min=-200, b_max=400, clip=True),
+
+        # RandStdShiftIntensity(factors = (5 , 10), prob=0.1, nonzero=False, channel_wise=False
+        # RandBiasField(degree=3, coeff_range=(0.0, 0.1), prob=0.1),
+        # SavitzkyGolaySmooth(window_length, order, axis=1, mode='zeros'),
+        # MedianSmooth(radius=1)
+        # GaussianSmooth(sigma=1.0, approx='erf')
+        # RandGaussianSmooth(sigma_x=(0.25, 1.5), sigma_y=(0.25, 1.5), sigma_z=(0.25, 1.5), prob=0.1, approx='erf'),
+        # GaussianSharpen(sigma1=3.0, sigma2=1.0, alpha=30.0, approx='erf'),
+        # RandGaussianSharpen(sigma1_x=(0.5, 1.0), sigma1_y=(0.5, 1.0), sigma1_z=(0.5, 1.0), sigma2_x=0.5, sigma2_y=0.5, sigma2_z=0.5, alpha=(10.0, 30.0), approx='erf', prob=0.1)
+        # RandCoarseShuffle(holes, spatial_size, max_holes=None, max_spatial_size=None, prob=0.1),
+        # RandCoarseDropout(holes, spatial_size, dropout_holes=True, fill_value=None, max_holes=None, max_spatial_size=None, prob=0.1)
+        
+        # RandGibbsNoised(keys=["plan", "repeat"], prob=0.2, alpha=(0.0, 1.0)),
+        # RandGaussianNoised(keys=["plan", "repeat"], prob=0.2, mean=0.0, std=0.1),
+        # RandKSpaceSpikeNoised(keys=["plan", "repeat"], prob=0.2, intensity_range=None, channel_wise=True),
+        # RandRicianNoised(keys=["plan", "repeat"], prob=0.2, mean=1.0, std=0.5),
     ])
 
-
-train_ds = CacheDataset(data=train_data, transform=transforms, cache_rate=1, num_workers=1)
+train_ds = CacheDataset(data=train_data, transform=transforms, cache_rate=0.01, num_workers=1)
 train_loader = DataLoader(train_ds, batch_size=1, shuffle=True, num_workers=1)
 
-val_ds = CacheDataset(data=val_data, transform=transforms, cache_rate=1, num_workers=1)
+val_ds = CacheDataset(data=val_data, transform=transforms, cache_rate=0.1, num_workers=1)
 val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=1)
 
 
 
-lambda_reg = 1e-4  # for L1 regularization
-weight_decay = 1e-4  # for L2 regularization
+# lambda_reg = 1e-4  # for L1 regularization
+# weight_decay = 1e-4  # for L2 regularization
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 print(torch.version.cuda)
-final_epoch = 50
-learning_rate = 0.0001
+final_epoch = 1
+learning_rate = 0.01
 best_mae = np.inf
 
 
 save_dir = '/home/shahpouriz/Data/DBP_Project/LOG_CT'
-filename = f'cnn4_{dim}_{learning_rate}_L1L2(4)_sn'
+filename = f'cnn4_{dim}_{learning_rate}_squareloss'
 loss_file = f'{save_dir}/{filename}.txt'
 
 if not os.path.isdir(save_dir):
         os.makedirs(save_dir)
 
 
-model =Sama3DCNN4(width=dim, height=dim, depth=dim).to(device)
+model =Dual3DCNN4(width=dim, height=dim, depth=dim).to(device)
 print("Model device:", next(model.parameters()).device)
 
-# mae_loss = torch.nn.MSELoss()
-loss_func = torch.nn.L1Loss()
-
+loss_func = torch.nn.MSELoss()
+# loss_func = torch.nn.L1Loss()
+# loss_func = np.square(torch.nn.MSELoss().item())
 
   # Start with a learning rate
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -157,7 +173,7 @@ for epoch in range(final_epoch):
         print(output)
 
         loss = loss_func(output, reg)
-
+        loss =  np.square(loss)
 
         # L1 Regularization
         l1_reg = torch.tensor(0., requires_grad=True).to(device)
@@ -166,7 +182,7 @@ for epoch in range(final_epoch):
                 l1_reg = l1_reg + torch.norm(param, 1)
         
         # Combine loss with L1 regularization
-        loss = loss + lambda_reg * l1_reg
+        # loss = loss  + lambda_reg * l1_reg
 
 
         loss.backward()

@@ -397,7 +397,7 @@ class Sama3DCNN4(nn.Module):
 
         # Hyperparameters
         self.num_filters = [8, 16, 32, 64, 128]
-        self.output_scale = 1  # Scale factor for final output to map it to [-15, 15]
+        self.output_scale = 15  # Scale factor for final output to map it to [-15, 15]
 
         # Initialize the convolutional blocks for both fixed and moving inputs
         self.input_fixed_blocks = nn.ModuleList()
