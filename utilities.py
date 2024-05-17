@@ -2,6 +2,12 @@
 import json
 import os
 import random
+import re
+import glob
+import numpy as np
+from monai.data import DataLoader, CacheDataset
+from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, NormalizeIntensityd, Spacingd, SpatialPadd, CenterSpatialCropd
+
 
 def read_json_file(file_path):
     with open(file_path, 'r') as file:
@@ -57,16 +63,11 @@ def create_list_from_master_json(test_json_path, data_path, exception_list=[]):
         return pCT_dose_list, rCT_dose_list, final_translation_list
 
 
-
-import json
-import os
-import random
-import torch
-
 def read_json_file(file_path):
     with open(file_path, 'r') as file:
         data = json.load(file)
     return data
+
 
 def create_list_from_master_json(test_json_path, data_path, exception_list=[]):
     json_data = read_json_file(test_json_path)
@@ -116,32 +117,11 @@ def create_list_from_master_json(test_json_path, data_path, exception_list=[]):
         
         return pCT_dose_list, rCT_dose_list, final_translation_list
 
-# def split_data(data, train_ratio, val_ratio, test_ratio, seed=None):
-#     # Set the random seed for replayability
-#     random.seed(seed)
-
-#     # Calculate the number of samples for each set
-#     total_samples = len(data)
-#     train_samples = int(total_samples * train_ratio)
-#     val_samples = int(total_samples * val_ratio)
-#     test_samples = total_samples - train_samples - val_samples
-
-#     # Shuffle the data randomly
-#     random.shuffle(data)
-
-#     # Split the data into sets
-#     train_set = data[:train_samples]
-#     val_set = data[train_samples:train_samples + val_samples]
-#     test_set = data[train_samples + val_samples:]
-
-#     return train_set, val_set, test_set
 
 def create_folder_if_not_exists(path):
     if not os.path.isdir(path):
         os.makedirs(path)
         
-
-
 
 def list_patient_folders(data_path):
     """
@@ -156,11 +136,6 @@ def list_patient_folders(data_path):
         print(f"Directory {data_path} was not found.")
         return []
 
-
-
-import re
-import glob
-import numpy as np
 
 def prepare_data(data_dir, patient_ids):
     pct_paths = []
@@ -286,7 +261,6 @@ def split_data(data, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, seed=42):
     return train_data, val_data, test_data
 
 
-
 def prepare_data_nrrd_for_CT(data_dir, patient_ids):
     pct_paths = []
     rct_paths = []
@@ -319,11 +293,6 @@ def prepare_data_nrrd_for_CT(data_dir, patient_ids):
 
     return pct_paths, rct_paths, reg_pos_array
 
-
-
-import os
-import random
-import glob
 
 class DataFactory:
     def __init__(self, data_path, train_ratio=0.70, val_ratio=0.20, test_ratio=0.10):
@@ -362,9 +331,6 @@ class DataFactory:
             raise ValueError("Invalid data split type. Use 'train', 'val', or 'test'.")
 
 
-from monai.data import DataLoader, CacheDataset
-from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, NormalizeIntensityd, Spacingd, SpatialPadd, CenterSpatialCropd
-
 class LoaderFactory:
     def __init__(self, data, transforms, cache_rate=0.1, num_workers=1):
         self.data = data
@@ -376,29 +342,87 @@ class LoaderFactory:
         dataset = CacheDataset(data=self.data, transform=self.transforms, cache_rate=self.cache_rate, num_workers=self.num_workers)
         return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
 
-# from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, NormalizeIntensityd, Spacingd, SpatialPadd, CenterSpatialCropd
 
-# from utilities import DataFactory, LoaderFactory
-# data_path = '/data/shahpouriz/DBP_CTs/nrrd/proton'
-# data_preparator = DataFactory(data_path)
-# train_data = data_preparator.get_data_split('train')
 
-# # Define transformations as shown in your code snippet
-# dim = 128
-# size = (dim, dim, dim)
-# pixdim = (1.0, 1.0, 1.0)
-# transforms = Compose([
-#         LoadImaged(keys=["plan", "repeat"], reader=ITKReader()),
-#         EnsureChannelFirstd(keys=["plan", "repeat"]),
-#         NormalizeIntensityd(keys=["plan", "repeat"]),
-#         Spacingd(keys=["plan", "repeat"], pixdim=pixdim, mode='trilinear'),
-#         SpatialPadd(keys=["plan", "repeat"], spatial_size=size, mode='constant'),  # Ensure minimum size
-#         CenterSpatialCropd(keys=["plan", "repeat"], roi_size=size),  # Ensure uniform size
-#     ])
+def save_experiment_details(data, path_experiments, 
+                               train_data, val_data, test_data,
+                               final_epoch, optimizer, scheduler, dim, pixdim,
+                               batch_size, cache_rate, num_workers, 
+                               reader, spacing_mode, spacial_pad,
+                               initializer, num_filters, kernel_size, stride, dropout,
+                               learning_rate, lambda_reg, weight_decay, weight_correction):
+                            #df, df_loss_min, df_val_min, weight_correction):
+    
+    data['experiment5'] = {
+        'inf_data': {
+            'num_train': len(train_data),
+            'percent_train': len(train_data) / (len(test_data) + len(val_data) + len(train_data)),
+            'num_val': len(val_data),
+            'percent_val': len(val_data) / (len(test_data) + len(val_data) + len(train_data)),
+            'num_test': len(test_data),
+            'percent_test': len(test_data) / (len(test_data) + len(val_data) + len(train_data))
+        },
+        'num_epoch': final_epoch,
+        'optimizer': str(optimizer),
+        'scheduler': {
+            'name': str(scheduler),
+            'mode': scheduler.mode,
+            'patience': scheduler.patience
+        },
+        'dimension': dim,
+        'spacing': pixdim,
+        'dataloader': {
+            'batch_size': batch_size,
+            'cache_rate': cache_rate,
+            'num_workers': num_workers
+        },
+        'transform': {
+            'reader': str(reader),
+            'spacing_mode': spacing_mode,
+            'spacial_pad': spacial_pad
+        },
+        'model': {
+            'initializer': str(initializer),
+            'num_filters': num_filters,
+            'num_blocks': len(num_filters),
+            'kernel_size': kernel_size,
+            'stride': stride,
+            'dropout': dropout,
+            'num_conv_block': len(kernel_size)
+        },
+        'learning_rate': {
+            'learning_rate': learning_rate,
+            'weight_correction': weight_correction,
+            'lambda_reg': lambda_reg,
+            'weight_decay': weight_decay
+        },
+        # 'best_results': {
+        #     'train_loss': df.Loss.min(),
+        #     'train_epoch': str(df_loss_min[0]),
+        #     'val_loss': df.Val.min(),
+        #     'val_epoch': str(df_val_min[0])
+        # }
+    }
+    
+    return data
 
-# train_loader_factory = LoaderFactory(train_data, transforms, cache_rate=0.01, num_workers=1)
-# train_loader = train_loader_factory.get_loader(batch_size=1, shuffle=True)
 
-# # Fetch a batch and do operations
-# for batch in train_loader:
-#     print(batch['plan'].shape)
+from datetime import datetime
+
+def get_date():
+    """
+    Returns the current date and time in the format 'day_month_hour'.
+    """
+    # Get the current date and time
+    now = datetime.now()
+
+    # Extract day, month, and hour
+    day = now.day
+    month = now.month
+    hour = now.hour
+
+    # Format as 'day_month_hour'
+    formatted_date = f"{month}_{day}_{hour}"
+
+    return formatted_date
+
